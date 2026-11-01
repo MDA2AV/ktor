@@ -8,17 +8,22 @@ import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.*
 import io.ktor.serialization.kotlinx.*
+import io.ktor.util.PlatformUtils
 import io.ktor.util.reflect.*
 import io.ktor.utils.io.*
 import io.ktor.utils.io.charsets.*
 import io.ktor.utils.io.core.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectIndexed
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialFormat
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.io.encodeToSink
 import kotlin.reflect.KClass
 
 /**
@@ -44,7 +49,10 @@ internal class KotlinxSerializationJsonExtensions(private val format: Json) : Ko
         typeInfo: TypeInfo,
         value: Any?
     ): OutgoingContent? {
-        if (charset != Charsets.UTF_8 || typeInfo.type != Flow::class) return null
+        if (charset != Charsets.UTF_8) return null
+        if (typeInfo.type != Flow::class) {
+            return if (PlatformUtils.IS_JVM) serializeToBytes(contentType, charset, typeInfo, value) else null
+        }
 
         val elementTypeInfo = typeInfo.argumentTypeInfo()
         val serializer = format.serializersModule.serializerForTypeInfo(elementTypeInfo)
@@ -60,6 +68,27 @@ internal class KotlinxSerializationJsonExtensions(private val format: Json) : Ko
             },
             contentType.withCharsetIfNeeded(charset)
         )
+    }
+
+    // As UTF-8 straight into a kotlinx-io buffer, on the JVM: there encodeToString writes into an array from kotlinx's
+    // pool, which every thread takes turns on under one lock, twice a response - with a thread per core, the cap.
+    // Elsewhere encodeToString is the faster way, and the converter's own.
+    @OptIn(InternalAPI::class)
+    private fun serializeToBytes(
+        contentType: ContentType,
+        charset: Charset,
+        typeInfo: TypeInfo,
+        value: Any?
+    ): OutgoingContent {
+        val serializer = try {
+            format.serializersModule.serializerForTypeInfo(typeInfo)
+        } catch (_: SerializationException) {
+            guessSerializer(value, format.serializersModule)
+        }
+        val buffer = Buffer()
+        @Suppress("UNCHECKED_CAST")
+        format.encodeToSink(serializer as KSerializer<Any?>, value, buffer)
+        return ByteArrayContent(buffer.readByteArray(), contentType.withCharsetIfNeeded(charset))
     }
 
     override suspend fun deserialize(charset: Charset, typeInfo: TypeInfo, content: ByteReadChannel): Any? {
