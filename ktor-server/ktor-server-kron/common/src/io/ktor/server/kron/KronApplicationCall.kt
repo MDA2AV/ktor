@@ -153,7 +153,7 @@ internal class KronApplicationRequest(
 
         val next = indexOf(name, i + 1)
         if (next < 0) {
-            return listOf(value(i))
+            return OneValue(value(i))
         }
 
         val all = ArrayList<String>(2)
@@ -359,6 +359,19 @@ internal class KronApplicationResponse(
         }
 
         return body.isComplete
+    }
+}
+
+// A header's only value: on Native, listOf(value) is an ArrayList made through a vararg array, five objects
+private class OneValue(private val value: String) : AbstractList<String>() {
+    override val size: Int get() = 1
+
+    override fun get(index: Int): String {
+        if (index != 0) {
+            throw IndexOutOfBoundsException("Index $index, size 1")
+        }
+
+        return value
     }
 }
 
