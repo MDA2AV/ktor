@@ -11,11 +11,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Runnable
 import kron.Reactor
-import kron.RingTimer
-import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
-import kotlin.coroutines.startCoroutine
 
 /**
  * Runs coroutines on [reactor]'s thread, each resumption posted to the reactor and run on its loop's next pass, from
@@ -33,12 +29,9 @@ internal class ReactorDispatcher(private val reactor: Reactor) : CoroutineDispat
     // submission, and the completion resumes the coroutine there - no timer thread, no handoff. A cancelled wait
     // still runs out in the kernel; its resumption is then ignored.
     override fun scheduleResumeAfterDelay(timeMillis: Long, continuation: CancellableContinuation<Unit>) {
-        val timer = RingTimer(reactor)
-        suspend { timer.delay(timeMillis) }.startCoroutine(
-            Continuation(EmptyCoroutineContext) {
-                with(continuation) { resumeUndispatched(Unit) }
-            },
-        )
+        reactor.submitTimeout(minOf(timeMillis, Long.MAX_VALUE / 1_000_000) * 1_000_000) {
+            with(continuation) { resumeUndispatched(Unit) }
+        }
     }
 
     override fun toString(): String = "ReactorDispatcher(${reactor.id})"
