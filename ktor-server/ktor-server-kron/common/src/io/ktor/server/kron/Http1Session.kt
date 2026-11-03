@@ -36,7 +36,7 @@ import kron.tls.TlsSession
  * decrypted as it arrives, and everything written goes through the [TlsSession], to BoringSSL or the kernel.
  */
 internal class Http1Session(
-    private val conn: TcpConnection,
+    internal val conn: TcpConnection,
     private val engine: KronApplicationEngine,
     private val tlsService: TlsService? = null,
 ) {
@@ -386,7 +386,8 @@ internal class Http1Session(
     }
 
     /** Sends what is staged; throws once the peer is gone, so a streaming writer stops. */
-    internal suspend fun flush() {
+    @Suppress("NOTHING_TO_INLINE")
+    internal suspend inline fun flush() {
         conn.flush()
         if (conn.isClosed) {
             throw ChannelWriteException("The peer closed the connection", ClosedWriteChannelException())

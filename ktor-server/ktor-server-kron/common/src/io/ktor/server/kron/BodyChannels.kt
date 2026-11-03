@@ -48,8 +48,24 @@ internal class RequestBody(
 
     override val isClosedForRead: Boolean get() = cause != null || (isComplete && buffer.exhausted())
 
+    // What the carry already holds is taken without suspending, so that a body that came with its head makes no frame
     override suspend fun awaitContent(min: Int): Boolean {
         cause?.let { throw it }
+        if (buffer.size < min && !isComplete && session.available > 0) {
+            when {
+                raw -> takeRaw()
+                !chunked -> takeLength()
+            }
+        }
+
+        if (buffer.size >= min || isComplete) {
+            return buffer.size >= min
+        }
+
+        return awaitMore(min)
+    }
+
+    private suspend fun awaitMore(min: Int): Boolean {
         while (buffer.size < min && !isComplete) {
             when {
                 raw -> pullRaw()
@@ -73,11 +89,17 @@ internal class RequestBody(
         }
     }
 
-    private suspend fun pullLength() {
+    // The pulls and await are inline: a wait makes awaitMore's frame and fill's, and no other
+    @Suppress("NOTHING_TO_INLINE")
+    private suspend inline fun pullLength() {
         if (session.available == 0) {
             await()
         }
 
+        takeLength()
+    }
+
+    private fun takeLength() {
         val n = minOf(remaining, session.available.toLong()).toInt()
         buffer.write(session.carry, session.start, session.start + n)
         session.start += n
@@ -88,7 +110,8 @@ internal class RequestBody(
     }
 
     // Complete chunks only: one that has not all arrived waits in the carry, up to MAX_CHUNK_WAIT bytes of it.
-    private suspend fun pullChunks() {
+    @Suppress("NOTHING_TO_INLINE")
+    private suspend inline fun pullChunks() {
         val decoded = decoded!!
         while (true) {
             val held = session.available
@@ -125,17 +148,23 @@ internal class RequestBody(
         }
     }
 
-    private suspend fun pullRaw() {
+    @Suppress("NOTHING_TO_INLINE")
+    private suspend inline fun pullRaw() {
         if (session.available == 0 && !session.fill()) {
             isComplete = true
             return
         }
 
+        takeRaw()
+    }
+
+    private fun takeRaw() {
         buffer.write(session.carry, session.start, session.end)
         session.start = session.end
     }
 
-    private suspend fun await() {
+    @Suppress("NOTHING_TO_INLINE")
+    private suspend inline fun await() {
         if (expectContinue) {
             expectContinue = false
             session.sendContinue()
