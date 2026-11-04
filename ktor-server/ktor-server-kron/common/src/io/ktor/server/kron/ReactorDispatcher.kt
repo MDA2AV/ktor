@@ -25,8 +25,37 @@ import kotlin.coroutines.startCoroutine
  */
 @OptIn(InternalCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 internal class ReactorDispatcher(private val reactor: Reactor) : CoroutineDispatcher(), Delay {
+    // Resumptions made on the reactor's thread wait here for one posted task that runs them all: a post each would
+    // make a lambda and a queue node each
+    private val pending = ArrayDeque<Runnable>()
+    private var drainPosted = false
+    private val drain: () -> Unit = ::runPending
+
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        reactor.post { block.run() }
+        if (!reactor.onReactorThread) {
+            reactor.post { block.run() }
+            return
+        }
+
+        pending.addLast(block)
+        if (!drainPosted) {
+            drainPosted = true
+            reactor.post(drain)
+        }
+    }
+
+    private fun runPending() {
+        try {
+            while (true) {
+                (pending.removeFirstOrNull() ?: return).run()
+            }
+        } finally {
+            // A resumption that threw leaves the rest for another pass
+            drainPosted = pending.isNotEmpty()
+            if (drainPosted) {
+                reactor.post(drain)
+            }
+        }
     }
 
     // delay() as an IORING_OP_TIMEOUT on the reactor's own ring: the deadline leaves with the reactor's next
