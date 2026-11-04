@@ -79,7 +79,7 @@ internal class RequestBody(
         }
 
         val n = minOf(remaining, session.available.toLong()).toInt()
-        buffer.write(session.carry, session.start, session.start + n)
+        buffer.append(session.carry, session.start, session.start + n)
         session.start += n
         remaining -= n
         if (remaining == 0L) {
@@ -100,7 +100,7 @@ internal class RequestBody(
                 }
 
                 if (decoded.length > 0) {
-                    buffer.write(decoded.array, 0, decoded.length)
+                    buffer.append(decoded.array, 0, decoded.length)
                     decoded.reset()
                 }
 
@@ -131,7 +131,7 @@ internal class RequestBody(
             return
         }
 
-        buffer.write(session.carry, session.start, session.end)
+        buffer.append(session.carry, session.start, session.end)
         session.start = session.end
     }
 
@@ -156,6 +156,9 @@ internal class RequestBody(
         const val MAX_CHUNK_WAIT = 1024 * 1024
     }
 }
+
+/** Appends [bytes] `[from, to)` to this buffer, which may take a copy of its own rather than copy them in. */
+internal expect fun Buffer.append(bytes: ByteArray, from: Int, to: Int)
 
 /**
  * A response's body as Ktor streams it: bytes collect in [writeBuffer] and are staged in the connection's write slab
